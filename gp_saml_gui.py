@@ -4,13 +4,15 @@ try:
     import gi
     gi.require_version('Gtk', '3.0')
     gi.require_version('WebKit2', '4.0')
-    from gi.repository import Gtk, WebKit2, GLib
+    from gi.repository import Gtk, WebKit2, GLib, Gio
+    from gi.repository.Gio import TlsCertificateFlags
 except ImportError:
     try:
         import pgi as gi
         gi.require_version('Gtk', '3.0')
         gi.require_version('WebKit2', '4.0')
-        from pgi.repository import Gtk, WebKit2, GLib
+        from pgi.repository import Gtk, WebKit2, GLib, Gio
+        from gi.repository.Gio import TlsCertificateFlags
     except ImportError:
         gi = None
 if gi is None:
@@ -45,9 +47,13 @@ COOKIE_FIELDS = ('prelogin-cookie', 'portal-userauthcookie')
 
 
 class SAMLLoginView:
-    def __init__(self, uri, html=None, verbose=False, cookies=None, verify=True, user_agent=None):
+    def __init__(self, uri, html=None, verbose=False, cookies=None, verify=True, user_agent=None, root_cert=None, host=None):
         Gtk.init(None)
         window = Gtk.Window()
+
+        self.html = html
+        self.uri = uri
+        self.tries = 0
 
         # API reference: https://lazka.github.io/pgi-docs/#WebKit2-4.0
 
@@ -57,6 +63,9 @@ class SAMLLoginView:
         self.verbose = verbose
 
         self.ctx = WebKit2.WebContext.get_default()
+
+        self.root_cert = root_cert
+
         if not verify:
             self.ctx.set_tls_errors_policy(WebKit2.TLSErrorsPolicy.IGNORE)
         self.cookies = self.ctx.get_cookie_manager()
@@ -78,6 +87,7 @@ class SAMLLoginView:
         window.connect('delete-event', self.close)
         self.wview.connect('load-changed', self.on_load_changed)
         self.wview.connect('resource-load-started', self.log_resources)
+        self.wview.connect('load-failed-with-tls-errors', self.on_load_failed_tls)
 
         if html:
             self.wview.load_html(html, uri)
@@ -116,6 +126,18 @@ class SAMLLoginView:
         if charset or content_type.startswith('text/'):
             print(data.decode(charset or 'utf-8'), file=stderr)
 
+    def on_load_failed_tls(self, webview, url: str, cert, error):
+        print('tls load failed', file=stderr)
+        ca = Gio.TlsCertificate.new_from_file(self.root_cert)
+        res = cert.verify(trusted_ca=ca)
+        if res == TlsCertificateFlags.NO_FLAGS:
+            host = url.replace('https://', '')
+            host = host[:host.index('/')]
+            # we verified the certificate, so let it be trusted
+            self.ctx.allow_tls_certificate_for_host(cert, host)
+            return
+        print(res, file=stderr)
+
     def on_load_changed(self, webview, event):
         if event != WebKit2.LoadEvent.FINISHED:
             return
@@ -124,6 +146,20 @@ class SAMLLoginView:
         uri = mr.get_uri()
         rs = mr.get_response()
         h = rs.get_http_headers() if rs else None
+
+        if h is None:
+            if self.tries < 3:
+                self.tries += 1
+                print('[ERROR  ] Unable to decode payload. Trying again...', file=stderr)
+                if self.html:
+                    self.wview.load_html(self.html, self.uri)
+                else:
+                    self.wview.load_uri(self.uri)
+                return True
+            else:
+                print('[ERROR  ] Unable to decode payload. Exhausted retries. Exiting...', file=stderr)
+            return False
+
         ct = h.get_content_type()
 
         if self.verbose:
@@ -216,6 +252,7 @@ class TLSAdapter(requests.adapters.HTTPAdapter):
         ssl_context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
         ssl_context.set_ciphers('DEFAULT:@SECLEVEL=1')
         ssl_context.options |= 1<<2  # OP_LEGACY_SERVER_CONNECT
+        ssl_context.check_hostname = False
         self.poolmanager = urllib3.PoolManager(
                 num_pools=connections,
                 maxsize=maxsize,
@@ -243,6 +280,7 @@ def parse_args(args = None):
     g = p.add_argument_group('Client certificate')
     g.add_argument('-c','--cert', help='PEM file containing client certificate (and optionally private key)')
     g.add_argument('--key', help='PEM file containing client private key (if not included in same file as certificate)')
+    g.add_argument('--root-cert', dest='root_cert', help='PEM file containing root certificate')
     g = p.add_argument_group('Debugging and advanced options')
     x = p.add_mutually_exclusive_group()
     x.add_argument('-v','--verbose', default=1, action='count', help='Increase verbosity of explanatory output to stderr')
@@ -354,7 +392,7 @@ def main(args = None):
     # spawn WebKit view to do SAML interactive login
     if args.verbose:
         print("Got SAML %s, opening browser..." % sam, file=stderr)
-    slv = SAMLLoginView(uri, html, verbose=args.verbose, cookies=args.cookies, verify=args.verify, user_agent=args.user_agent)
+    slv = SAMLLoginView(uri, html, verbose=args.verbose, cookies=args.cookies, verify=args.verify, user_agent=args.user_agent, root_cert=args.root_cert, host=args.server)
     Gtk.main()
     if slv.closed:
         print("Login window closed by user.", file=stderr)
@@ -435,6 +473,7 @@ def main(args = None):
             'USER': quote(un), 'COOKIE': quote(cv), 'OS': quote(args.ocos),
         }
         print('\n'.join('%s=%s' % pair for pair in varvals.items()))
+
 
 if __name__ == "__main__":
     main()
