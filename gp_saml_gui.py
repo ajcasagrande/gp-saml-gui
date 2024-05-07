@@ -5,14 +5,12 @@ try:
     gi.require_version('Gtk', '3.0')
     gi.require_version('WebKit2', '4.0')
     from gi.repository import Gtk, WebKit2, GLib, Gio
-    from gi.repository.Gio import TlsCertificateFlags
 except ImportError:
     try:
         import pgi as gi
         gi.require_version('Gtk', '3.0')
         gi.require_version('WebKit2', '4.0')
         from pgi.repository import Gtk, WebKit2, GLib, Gio
-        from gi.repository.Gio import TlsCertificateFlags
     except ImportError:
         gi = None
 if gi is None:
@@ -141,7 +139,7 @@ class SAMLLoginView:
         for file in files:
             ca = Gio.TlsCertificate.new_from_file(file)
             res = cert.verify(trusted_ca=ca)
-            if res == TlsCertificateFlags.NO_FLAGS:
+            if res == 0:  # 0 means TlsCertificateFlags.NO_FLAGS aka successful
                 # we verified the certificate, so let it be trusted
                 self.ctx.allow_tls_certificate_for_host(cert, host)
                 # cleanup temp files
