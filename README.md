@@ -69,7 +69,7 @@ Second, gp-saml-gui itself
 Install gp-saml-gui itself using `pip`:
 
 ```
-$ pip3 install https://github.com/dlenski/gp-saml-gui/archive/master.zip
+$ pip3 install https://github.com/ajcasagrande/gp-saml-gui/archive/new-main.zip
 ...
 $ gp-saml-gui
 usage: gp-saml-gui [-h] [--no-verify] [-C COOKIES | -K] [-p | -g] [-c CERT]
