@@ -23,6 +23,7 @@ import urllib3
 import requests
 import xml.etree.ElementTree as ET
 import ssl
+import os
 import tempfile
 
 from operator import setitem
@@ -127,16 +128,31 @@ class SAMLLoginView:
             print(data.decode(charset or 'utf-8'), file=stderr)
 
     def on_load_failed_tls(self, webview, url: str, cert, error):
-        print('tls load failed', file=stderr)
-        ca = Gio.TlsCertificate.new_from_file(self.root_cert)
-        res = cert.verify(trusted_ca=ca)
-        if res == TlsCertificateFlags.NO_FLAGS:
-            host = url.replace('https://', '')
-            host = host[:host.index('/')]
-            # we verified the certificate, so let it be trusted
-            self.ctx.allow_tls_certificate_for_host(cert, host)
-            return
-        print(res, file=stderr)
+        print(f'tls load failed: {url}: {error}', file=stderr)
+        host = url.replace('https://', '')
+        host = host[:host.index('/')]
+
+        temp_files = split_pem_certificates(self.root_cert)
+        if temp_files is None:
+            files = [self.root_cert]
+            temp_files = []
+        else:
+            files = temp_files
+        for file in files:
+            ca = Gio.TlsCertificate.new_from_file(file)
+            res = cert.verify(trusted_ca=ca)
+            if res == TlsCertificateFlags.NO_FLAGS:
+                # we verified the certificate, so let it be trusted
+                self.ctx.allow_tls_certificate_for_host(cert, host)
+                # cleanup temp files
+                for file_path in temp_files:
+                    os.remove(file_path)
+                return
+            print('Unable to verify certificate:', res, file=stderr)
+        print(f'unable to validate certificate against {len(files)} root cert(s)', file=stderr)
+        # cleanup temp files
+        for file_path in temp_files:
+            os.remove(file_path)
 
     def on_load_changed(self, webview, event):
         if event != WebKit2.LoadEvent.FINISHED:
@@ -227,6 +243,32 @@ class SAMLLoginView:
             self.success = True
             Gtk.main_quit()
             return True
+
+
+def split_pem_certificates(root_cert):
+    # Read the input file
+    with open(root_cert, 'r') as f:
+        pem_data = f.read()
+
+    if '\n-----END CERTIFICATE-----\n' not in pem_data:
+        # this does not appear to be a PEM certificate
+        return None
+
+    # Split the PEM-encoded certificates
+    certificates = pem_data.split('-----END CERTIFICATE-----')
+
+    # Remove empty lines
+    certificates = [cert.strip() for cert in certificates if cert.strip()]
+
+    # Write each certificate to a separate temporary file
+    temp_files = []
+    for cert in certificates:
+        cert += '\n-----END CERTIFICATE-----\n'
+        with tempfile.NamedTemporaryFile(delete=False, suffix='.crt') as f:
+            f.write(cert.encode('utf-8'))
+            temp_files.append(f.name)
+
+    return temp_files
 
 
 class TLSAdapter(requests.adapters.HTTPAdapter):

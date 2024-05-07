@@ -1,0 +1,11 @@
+LICENSE
+README.md
+gp-saml-gui.8
+gp_saml_gui.py
+setup.py
+gp_saml_gui.egg-info/PKG-INFO
+gp_saml_gui.egg-info/SOURCES.txt
+gp_saml_gui.egg-info/dependency_links.txt
+gp_saml_gui.egg-info/entry_points.txt
+gp_saml_gui.egg-info/requires.txt
+gp_saml_gui.egg-info/top_level.txt

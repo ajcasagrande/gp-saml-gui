@@ -1,0 +1,2 @@
+[console_scripts]
+gp-saml-gui = gp_saml_gui:main
